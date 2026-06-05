@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../stores/authStore'
 import { Card, Button, Badge, Modal, Input, Select, Textarea, Spinner, EmptyState } from '../components/ui'
 import { formatCurrency } from '../utils/format'
-import type { Product, Category, ProductType } from '../types'
+import type { Product, Category, ProductType, Addon } from '../types'
 
 const PRODUCT_TYPE_LABEL: Record<ProductType, string> = {
   food: 'Comida', beverage: 'Bebida', combo: 'Combo', other: 'Outro',
@@ -20,6 +20,7 @@ export default function Products() {
   const [editing, setEditing] = useState<Product | null>(null)
   const [showModal, setShowModal] = useState(false)
   const [showCatModal, setShowCatModal] = useState(false)
+  const [showAddonModal, setShowAddonModal] = useState(false)
 
   useEffect(() => {
     if (!tenant) return
@@ -28,13 +29,16 @@ export default function Products() {
 
   async function loadData() {
     if (!tenant) return
-    const [{ data: prods }, { data: cats }] = await Promise.all([
-      supabase.from('products').select('*, category:categories(*)').eq('tenant_id', tenant.id).order('sort_order').order('name'),
-      supabase.from('categories').select('*').eq('tenant_id', tenant.id).eq('active', true).order('sort_order'),
-    ])
-    setProducts((prods ?? []) as Product[])
-    setCategories((cats ?? []) as Category[])
-    setLoading(false)
+    try {
+      const [{ data: prods }, { data: cats }] = await Promise.all([
+        supabase.from('products').select('*, category:categories(*)').eq('tenant_id', tenant.id).order('sort_order').order('name'),
+        supabase.from('categories').select('*').eq('tenant_id', tenant.id).eq('active', true).order('sort_order'),
+      ])
+      setProducts((prods ?? []) as Product[])
+      setCategories((cats ?? []) as Category[])
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function toggleAvailable(id: string, current: boolean) {
@@ -78,6 +82,9 @@ export default function Products() {
           </select>
         </div>
         <div className="flex gap-2">
+          <Button variant="outline" size="sm" leftIcon={<Tag size={14} />} onClick={() => setShowAddonModal(true)}>
+            Adicionais
+          </Button>
           <Button variant="outline" size="sm" leftIcon={<Tag size={14} />} onClick={() => setShowCatModal(true)}>
             Categorias
           </Button>
@@ -171,6 +178,13 @@ export default function Products() {
         categories={categories}
         tenantId={tenant?.id ?? ''}
         onSaved={loadData}
+      />
+
+      <AddonManagerModal
+        open={showAddonModal}
+        onClose={() => setShowAddonModal(false)}
+        categories={categories}
+        tenantId={tenant?.id ?? ''}
       />
     </div>
   )
@@ -322,7 +336,7 @@ function CategoryModal({ open, onClose, categories, tenantId, onSaved }: {
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Gerenciar Categorias">
+    <Modal open={open} onClose={onClose} title="Gerenciar Categorias" >
       <div className="space-y-4">
         <div className="space-y-2 max-h-48 overflow-y-auto">
           {categories.map(c => (
@@ -348,6 +362,156 @@ function CategoryModal({ open, onClose, categories, tenantId, onSaved }: {
           <Button loading={saving} onClick={addCategory} size="sm" className="w-full">
             Adicionar
           </Button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+// ──────────────────────────────────────────
+// Addon Manager Modal
+// ──────────────────────────────────────────
+function AddonManagerModal({ open, onClose, categories, tenantId }: {
+  open: boolean; onClose: () => void; categories: Category[]; tenantId: string
+}) {
+  const [addons, setAddons] = useState<Addon[]>([])
+  const [catFilter, setCatFilter] = useState('all')
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [price, setPrice] = useState('')
+  const [categoryId, setCategoryId] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [editing, setEditing] = useState<Addon | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    loadAddons()
+    setCatFilter('all')
+  }, [open, tenantId])
+
+  async function loadAddons() {
+    const { data } = await supabase.from('addons').select('*').eq('tenant_id', tenantId).order('sort_order').order('name')
+    setAddons((data ?? []) as Addon[])
+  }
+
+  function startEdit(addon: Addon) {
+    setEditing(addon)
+    setName(addon.name)
+    setDescription(addon.description ?? '')
+    setPrice(String(addon.price))
+    setCategoryId(addon.category_id ?? '')
+  }
+
+  function clearForm() {
+    setEditing(null)
+    setName('')
+    setDescription('')
+    setPrice('')
+    setCategoryId('')
+  }
+
+  async function saveAddon() {
+    if (!name || !price) return
+    setSaving(true)
+    const payload = {
+      tenant_id: tenantId,
+      name,
+      description: description || null,
+      price: parseFloat(price),
+      category_id: categoryId || null,
+      available: true,
+    }
+    if (editing) {
+      await supabase.from('addons').update(payload).eq('id', editing.id)
+    } else {
+      await supabase.from('addons').insert(payload)
+    }
+    setSaving(false)
+    clearForm()
+    loadAddons()
+  }
+
+  async function deleteAddon(id: string) {
+    await supabase.from('addons').delete().eq('id', id)
+    setAddons(prev => prev.filter(a => a.id !== id))
+  }
+
+  async function toggleAddon(id: string, current: boolean) {
+    await supabase.from('addons').update({ available: !current }).eq('id', id)
+    setAddons(prev => prev.map(a => a.id === id ? { ...a, available: !current } : a))
+  }
+
+  const filtered = addons.filter(a =>
+    catFilter === 'all' || (catFilter === '__global__' ? !a.category_id : a.category_id === catFilter)
+  )
+
+  return (
+    <Modal open={open} onClose={onClose} title="Gerenciar Adicionais" maxWidth="max-w-2xl">
+      <div className="space-y-4">
+        <div className="flex gap-2 flex-wrap">
+          {[{ id: 'all', name: 'Todos', icon: '' }, { id: '__global__', name: 'Global', icon: '' }, ...categories].map(c => (
+            <button key={c.id} onClick={() => setCatFilter(c.id)}
+              className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
+                catFilter === c.id ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}>
+              {'color' in c ? `${c.icon} ${c.name}` : c.name}
+            </button>
+          ))}
+        </div>
+
+        <div className="space-y-2 max-h-48 overflow-y-auto">
+          {filtered.length === 0 && (
+            <p className="text-sm text-slate-400 text-center py-4">Nenhum adicional cadastrado</p>
+          )}
+          {filtered.map(a => {
+            const cat = categories.find(c => c.id === a.category_id)
+            return (
+              <div key={a.id} className="flex items-center justify-between px-3 py-2 bg-slate-50 rounded-lg gap-2">
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-medium text-slate-800">{a.name}</span>
+                  {cat && <span className="ml-2 text-xs text-slate-400">{cat.icon} {cat.name}</span>}
+                  {!a.category_id && <span className="ml-2 text-xs text-slate-400">Global</span>}
+                </div>
+                <span className="text-sm font-semibold text-indigo-600 flex-shrink-0">+{formatCurrency(a.price)}</span>
+                <div className="flex gap-1 flex-shrink-0">
+                  <button onClick={() => toggleAddon(a.id, a.available)} className="p-1 hover:bg-slate-200 rounded">
+                    {a.available
+                      ? <ToggleRight size={16} className="text-emerald-500" />
+                      : <ToggleLeft size={16} className="text-slate-400" />}
+                  </button>
+                  <button onClick={() => startEdit(a)} className="p-1 hover:bg-slate-200 rounded">
+                    <Pencil size={14} className="text-slate-500" />
+                  </button>
+                  <button onClick={() => deleteAddon(a.id)} className="p-1 hover:bg-rose-50 rounded">
+                    <Trash2 size={14} className="text-rose-400" />
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+
+        <div className="border-t pt-4 space-y-3">
+          <p className="text-sm font-medium text-slate-600">{editing ? 'Editar adicional' : 'Novo adicional'}</p>
+          <div className="grid grid-cols-2 gap-3">
+            <Input label="Nome" value={name} onChange={e => setName(e.target.value)} placeholder="Ex: Bacon extra" className="col-span-2" />
+            <Input label="Descrição (opcional)" value={description} onChange={e => setDescription(e.target.value)} placeholder="Detalhes…" className="col-span-2" />
+            <Input label="Preço (R$)" type="number" step="0.01" min="0" value={price} onChange={e => setPrice(e.target.value)} placeholder="0,00" />
+            <div>
+              <label className="text-sm font-medium text-slate-600 block mb-1.5">Categoria</label>
+              <select value={categoryId} onChange={e => setCategoryId(e.target.value)}
+                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                <option value="">Global (todos os produtos)</option>
+                {categories.map(c => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            {editing && <Button variant="secondary" size="sm" onClick={clearForm}>Cancelar</Button>}
+            <Button loading={saving} size="sm" onClick={saveAddon} className="flex-1">
+              {editing ? 'Salvar Alterações' : 'Adicionar'}
+            </Button>
+          </div>
         </div>
       </div>
     </Modal>

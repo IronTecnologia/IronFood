@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Navigate } from 'react-router-dom'
 import { TrendingUp, ShoppingBag, UtensilsCrossed, Receipt, ArrowUpRight } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts'
 import { supabase } from '../lib/supabase'
@@ -20,7 +21,15 @@ interface HourlyData { hour: string; value: number }
 interface DayData { day: string; value: number }
 
 export default function Dashboard() {
+  const user = useAuthStore(s => s.user)
+  const profile = useAuthStore(s => s.profile)
   const tenant = useAuthStore(s => s.tenant)
+
+  // Se é superadmin (tenant_id === user.id), redireciona para o painel SuperAdmin
+  if (user && profile && profile.tenant_id === user.id) {
+    return <Navigate to="/admin" replace />
+  }
+
   const [metrics, setMetrics] = useState<Metrics | null>(null)
   const [hourly, setHourly] = useState<HourlyData[]>([])
   const [weekly, setWeekly] = useState<DayData[]>([])
@@ -35,69 +44,68 @@ export default function Dashboard() {
   async function loadDashboard() {
     if (!tenant) return
     setLoading(true)
-    const now = new Date()
-    const todayStart = startOfDay(now).toISOString()
-    const todayEnd = endOfDay(now).toISOString()
+    try {
+      const now = new Date()
+      const todayStart = startOfDay(now).toISOString()
+      const todayEnd = endOfDay(now).toISOString()
 
-    const [ordersToday, openOrders, tables, yesterdayOrders] = await Promise.all([
-      supabase.from('orders').select('total,created_at,order_type')
-        .eq('tenant_id', tenant.id).eq('status', 'paid')
-        .gte('created_at', todayStart).lte('created_at', todayEnd),
-      supabase.from('orders').select('id')
-        .eq('tenant_id', tenant.id)
-        .in('status', ['pending','confirmed','preparing','ready']),
-      supabase.from('restaurant_tables').select('status')
-        .eq('tenant_id', tenant.id).eq('active', true),
-      supabase.from('orders').select('total')
-        .eq('tenant_id', tenant.id).eq('status', 'paid')
-        .gte('created_at', startOfDay(subDays(now, 1)).toISOString())
-        .lte('created_at', endOfDay(subDays(now, 1)).toISOString()),
-    ])
+      const [ordersToday, openOrders, tables, yesterdayOrders] = await Promise.all([
+        supabase.from('orders').select('total,created_at,order_type')
+          .eq('tenant_id', tenant.id).eq('status', 'paid')
+          .gte('created_at', todayStart).lte('created_at', todayEnd),
+        supabase.from('orders').select('id')
+          .eq('tenant_id', tenant.id)
+          .in('status', ['pending','confirmed','preparing','ready']),
+        supabase.from('restaurant_tables').select('status')
+          .eq('tenant_id', tenant.id).eq('active', true),
+        supabase.from('orders').select('total')
+          .eq('tenant_id', tenant.id).eq('status', 'paid')
+          .gte('created_at', startOfDay(subDays(now, 1)).toISOString())
+          .lte('created_at', endOfDay(subDays(now, 1)).toISOString()),
+      ])
 
-    const todayRevenue = (ordersToday.data ?? []).reduce((s, o) => s + Number(o.total), 0)
-    const yesterdayRevenue = (yesterdayOrders.data ?? []).reduce((s, o) => s + Number(o.total), 0)
-    const revenueChange = yesterdayRevenue > 0
-      ? ((todayRevenue - yesterdayRevenue) / yesterdayRevenue) * 100 : 0
-    const occupiedTables = (tables.data ?? []).filter(t => t.status === 'occupied').length
-    const totalTables = (tables.data ?? []).length
-    const paidCount = (ordersToday.data ?? []).length
-    const avgTicket = paidCount > 0 ? todayRevenue / paidCount : 0
+      const todayRevenue = (ordersToday.data ?? []).reduce((s, o) => s + Number(o.total), 0)
+      const yesterdayRevenue = (yesterdayOrders.data ?? []).reduce((s, o) => s + Number(o.total), 0)
+      const revenueChange = yesterdayRevenue > 0
+        ? ((todayRevenue - yesterdayRevenue) / yesterdayRevenue) * 100 : 0
+      const occupiedTables = (tables.data ?? []).filter(t => t.status === 'occupied').length
+      const totalTables = (tables.data ?? []).length
+      const paidCount = (ordersToday.data ?? []).length
+      const avgTicket = paidCount > 0 ? todayRevenue / paidCount : 0
 
-    setMetrics({
-      todayRevenue,
-      openOrders: openOrders.data?.length ?? 0,
-      occupiedTables: totalTables > 0 ? occupiedTables : 0,
-      avgTicket,
-      revenueChange,
-    })
+      setMetrics({
+        todayRevenue,
+        openOrders: openOrders.data?.length ?? 0,
+        occupiedTables: totalTables > 0 ? occupiedTables : 0,
+        avgTicket,
+        revenueChange,
+      })
 
-    // Hourly chart
-    const hrs: Record<number, number> = {}
-    for (let h = 8; h <= 23; h++) hrs[h] = 0
-    for (const o of ordersToday.data ?? []) {
-      const h = new Date(o.created_at).getHours()
-      if (hrs[h] !== undefined) hrs[h] += Number(o.total)
+      const hrs: Record<number, number> = {}
+      for (let h = 8; h <= 23; h++) hrs[h] = 0
+      for (const o of ordersToday.data ?? []) {
+        const h = new Date(o.created_at).getHours()
+        if (hrs[h] !== undefined) hrs[h] += Number(o.total)
+      }
+      setHourly(Object.entries(hrs).map(([h, v]) => ({ hour: `${h}h`, value: Number(v.toFixed(2)) })))
+
+      const days: DayData[] = []
+      for (let i = 6; i >= 0; i--) {
+        const d = subDays(now, i)
+        const { data } = await supabase.from('orders').select('total')
+          .eq('tenant_id', tenant.id).eq('status', 'paid')
+          .gte('created_at', startOfDay(d).toISOString())
+          .lte('created_at', endOfDay(d).toISOString())
+        days.push({ day: format(d, 'dd/MM'), value: (data ?? []).reduce((s, o) => s + Number(o.total), 0) })
+      }
+      setWeekly(days)
+
+      const { data: rec } = await supabase.from('orders').select('*')
+        .eq('tenant_id', tenant.id).order('created_at', { ascending: false }).limit(8)
+      setRecent((rec ?? []) as Order[])
+    } finally {
+      setLoading(false)
     }
-    setHourly(Object.entries(hrs).map(([h, v]) => ({ hour: `${h}h`, value: Number(v.toFixed(2)) })))
-
-    // Weekly chart
-    const days: DayData[] = []
-    for (let i = 6; i >= 0; i--) {
-      const d = subDays(now, i)
-      const { data } = await supabase.from('orders').select('total')
-        .eq('tenant_id', tenant.id).eq('status', 'paid')
-        .gte('created_at', startOfDay(d).toISOString())
-        .lte('created_at', endOfDay(d).toISOString())
-      days.push({ day: format(d, 'dd/MM'), value: (data ?? []).reduce((s, o) => s + Number(o.total), 0) })
-    }
-    setWeekly(days)
-
-    // Recent orders
-    const { data: rec } = await supabase.from('orders').select('*')
-      .eq('tenant_id', tenant.id).order('created_at', { ascending: false }).limit(8)
-    setRecent((rec ?? []) as Order[])
-
-    setLoading(false)
   }
 
   if (loading) {

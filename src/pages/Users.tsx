@@ -7,7 +7,7 @@ import { ROLE_LABEL } from '../utils/format'
 import type { Profile, UserRole } from '../types'
 
 const ROLE_BADGE: Record<UserRole, string> = {
-  admin: 'danger', waiter: 'info', kitchen: 'warning', bar: 'purple', cashier: 'success',
+  admin: 'danger', waiter: 'info', kitchen: 'warning', bar: 'purple', cashier: 'success', motoboy: 'default',
 }
 
 export default function Users() {
@@ -25,13 +25,16 @@ export default function Users() {
 
   async function loadUsers() {
     if (!tenant) return
-    const { data } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('tenant_id', tenant.id)
-      .order('full_name')
-    setUsers((data ?? []) as Profile[])
-    setLoading(false)
+    try {
+      const { data } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('tenant_id', tenant.id)
+        .order('full_name')
+      setUsers((data ?? []) as Profile[])
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function toggleActive(id: string, current: boolean) {
@@ -114,6 +117,7 @@ function UserModal({ open, onClose, user, tenantId, onSaved }: {
 }) {
   const [fullName, setFullName] = useState('')
   const [role, setRole] = useState<UserRole>('waiter')
+  const [whatsapp, setWhatsapp] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [saving, setSaving] = useState(false)
@@ -123,8 +127,9 @@ function UserModal({ open, onClose, user, tenantId, onSaved }: {
     if (user) {
       setFullName(user.full_name)
       setRole(user.role)
+      setWhatsapp((user as Profile & { whatsapp?: string }).whatsapp ?? '')
     } else {
-      setFullName(''); setRole('waiter'); setEmail(''); setPassword('')
+      setFullName(''); setRole('waiter'); setEmail(''); setPassword(''); setWhatsapp('')
     }
     setError('')
   }, [user, open])
@@ -134,16 +139,15 @@ function UserModal({ open, onClose, user, tenantId, onSaved }: {
     setSaving(true)
     try {
       if (user) {
-        await supabase.from('profiles').update({ full_name: fullName, role }).eq('id', user.id)
+        await supabase.from('profiles').update({ full_name: fullName, role, whatsapp: whatsapp || null }).eq('id', user.id)
       } else {
-        // Create user via Supabase Admin SDK or invite
-        // For demo: create auth user then profile
         const { data: authData, error: authErr } = await supabase.auth.admin.createUser({
           email, password, email_confirm: true,
         })
         if (authErr) throw authErr
         await supabase.from('profiles').insert({
           id: authData.user.id, tenant_id: tenantId, full_name: fullName, role,
+          whatsapp: whatsapp || null,
         })
       }
       onSaved()
@@ -160,12 +164,16 @@ function UserModal({ open, onClose, user, tenantId, onSaved }: {
         <Input label="Nome completo" value={fullName} onChange={e => setFullName(e.target.value)} />
         <Select label="Perfil de acesso" value={role} onChange={e => setRole(e.target.value as UserRole)}
           options={[
-            { value: 'admin', label: 'Administrador' },
-            { value: 'waiter', label: 'Garçom' },
+            { value: 'admin',   label: 'Administrador' },
+            { value: 'waiter',  label: 'Garçom' },
             { value: 'kitchen', label: 'Cozinha' },
-            { value: 'bar', label: 'Bar' },
+            { value: 'bar',     label: 'Bar' },
             { value: 'cashier', label: 'Caixa' },
+            { value: 'motoboy', label: 'Motoboy' },
           ]} />
+
+        <Input label="WhatsApp (opcional)" value={whatsapp} onChange={e => setWhatsapp(e.target.value)}
+          placeholder="(11) 99999-9999" />
 
         {!user && (
           <>

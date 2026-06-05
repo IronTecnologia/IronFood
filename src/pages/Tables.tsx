@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Plus, Users, Clock, ChefHat, Pencil, Trash2 } from 'lucide-react'
+import { Plus, Users, Clock, ChefHat, Pencil, Trash2, Receipt, CreditCard, Smartphone, Banknote, XCircle } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../stores/authStore'
 import { Card, Button, Badge, Modal, Input, Select, Spinner, EmptyState } from '../components/ui'
 import { cn } from '../utils/cn'
 import { TABLE_STATUS_LABEL, formatCurrency, formatTime } from '../utils/format'
-import type { RestaurantTable, Order, TableStatus } from '../types'
+import type { RestaurantTable, Order, TableStatus, PaymentMethod } from '../types'
 
 const STATUS_STYLE: Record<TableStatus, { badge: string; card: string; dot: string }> = {
   available: { badge: 'success', card: 'border-emerald-200 bg-emerald-50/30', dot: 'bg-emerald-500' },
@@ -27,6 +27,8 @@ export default function Tables() {
   const [showAddModal, setShowAddModal] = useState(false)
   const [showOrderModal, setShowOrderModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
+  const [showChargeModal, setShowChargeModal] = useState(false)
+  const [chargeOrder, setChargeOrder] = useState<Order | null>(null)
   const isAdmin = profile?.role === 'admin'
 
   const sections = ['Todos', ...Array.from(new Set(tables.map(t => t.section).filter(Boolean)))]
@@ -45,27 +47,25 @@ export default function Tables() {
 
   async function loadTables() {
     if (!tenant) return
-    const { data: tablesData } = await supabase
-      .from('restaurant_tables')
-      .select('*')
-      .eq('tenant_id', tenant.id)
-      .eq('active', true)
-      .order('number')
+    try {
+      const [{ data: tablesData }, { data: ordersData }] = await Promise.all([
+        supabase.from('restaurant_tables').select('*')
+          .eq('tenant_id', tenant.id).eq('active', true).order('number'),
+        supabase.from('orders').select('*, items:order_items(*)')
+          .eq('tenant_id', tenant.id)
+          .in('status', ['pending','confirmed','preparing','ready']),
+      ])
 
-    const { data: ordersData } = await supabase
-      .from('orders')
-      .select('*, items:order_items(*)')
-      .eq('tenant_id', tenant.id)
-      .in('status', ['pending','confirmed','preparing','ready'])
+      const orderMap: Record<string, Order> = {}
+      for (const o of ordersData ?? []) {
+        if (o.table_id) orderMap[o.table_id] = o as Order
+      }
 
-    const orderMap: Record<string, Order> = {}
-    for (const o of ordersData ?? []) {
-      if (o.table_id) orderMap[o.table_id] = o as Order
+      setTables((tablesData ?? []) as RestaurantTable[])
+      setOrders(orderMap)
+    } finally {
+      setLoading(false)
     }
-
-    setTables((tablesData ?? []) as RestaurantTable[])
-    setOrders(orderMap)
-    setLoading(false)
   }
 
   async function changeStatus(tableId: string, status: TableStatus) {
@@ -177,6 +177,16 @@ export default function Tables() {
             onEdit={() => { setShowOrderModal(false); setShowEditModal(true) }}
             onDelete={() => deleteTable(selected.id)}
             onClose={() => setShowOrderModal(false)}
+            onCharge={(order) => { setChargeOrder(order); setShowOrderModal(false); setShowChargeModal(true) }}
+            onCancelOrder={async (order) => {
+              if (!confirm(`Cancelar o pedido #${order.order_number}? Esta ação não pode ser desfeita.`)) return
+              await supabase.from('order_items').update({ status: 'cancelled' }).eq('order_id', order.id)
+              await supabase.from('orders').update({ status: 'cancelled' }).eq('id', order.id)
+              await supabase.from('restaurant_tables').update({ status: 'available' }).eq('id', order.table_id)
+              setShowOrderModal(false)
+              loadTables()
+            }}
+            onRefresh={loadTables}
           />
         )}
       </Modal>
@@ -187,6 +197,16 @@ export default function Tables() {
         onClose={() => setShowEditModal(false)}
         table={selected}
         onSaved={() => { loadTables(); setSelected(null) }}
+      />
+
+      {/* Charge Modal */}
+      <ChargeTableModal
+        open={showChargeModal}
+        onClose={() => setShowChargeModal(false)}
+        order={chargeOrder}
+        tenantId={tenant?.id ?? ''}
+        userId={profile?.id ?? ''}
+        onPaid={() => { setChargeOrder(null); loadTables() }}
       />
 
       {/* Add Table Modal */}
@@ -201,7 +221,7 @@ export default function Tables() {
 }
 
 // ──────────────────────────────────────────
-function TableDetailPanel({ table, order, canManage, isAdmin, onChangeStatus, onEdit, onDelete, onClose }: {
+function TableDetailPanel({ table, order, canManage, isAdmin, onChangeStatus, onEdit, onDelete, onClose, onCharge, onCancelOrder, onRefresh }: {
   table: RestaurantTable
   order?: Order
   canManage: boolean
@@ -210,8 +230,19 @@ function TableDetailPanel({ table, order, canManage, isAdmin, onChangeStatus, on
   onEdit: () => void
   onDelete: () => void
   onClose: () => void
+  onCharge: (order: Order) => void
+  onCancelOrder: (order: Order) => void
+  onRefresh: () => void
 }) {
   const statuses: TableStatus[] = ['available', 'occupied', 'reserved', 'cleaning']
+  const hasActiveOrder = !!order && !['paid', 'cancelled'].includes(order.status)
+  const activeItems = (order?.items ?? []).filter(i => i.status !== 'cancelled')
+
+  async function cancelItem(itemId: string, itemName: string) {
+    if (!confirm(`Cancelar "${itemName}"?`)) return
+    await supabase.from('order_items').update({ status: 'cancelled' }).eq('id', itemId)
+    onRefresh()
+  }
 
   return (
     <div className="space-y-4">
@@ -227,12 +258,10 @@ function TableDetailPanel({ table, order, canManage, isAdmin, onChangeStatus, on
           </Badge>
           {isAdmin && (
             <>
-              <button onClick={onEdit} title="Editar mesa"
-                className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
+              <button onClick={onEdit} title="Editar mesa" className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
                 <Pencil size={15} className="text-slate-500" />
               </button>
-              <button onClick={onDelete} title="Desativar mesa"
-                className="p-1.5 rounded-lg hover:bg-rose-50 transition-colors">
+              <button onClick={onDelete} title="Desativar mesa" className="p-1.5 rounded-lg hover:bg-rose-50 transition-colors">
                 <Trash2 size={15} className="text-rose-400" />
               </button>
             </>
@@ -240,21 +269,58 @@ function TableDetailPanel({ table, order, canManage, isAdmin, onChangeStatus, on
         </div>
       </div>
 
-      {order ? (
-        <div className="bg-slate-50 rounded-xl p-4 space-y-2">
-          <div className="flex justify-between text-sm">
-            <span className="text-slate-500">Pedido #{order.order_number}</span>
-            <span className="font-semibold text-slate-700">{formatCurrency(order.total)}</span>
+      {hasActiveOrder ? (
+        <>
+          <div className="bg-slate-50 rounded-xl p-4 space-y-2">
+            <div className="flex justify-between text-sm mb-1">
+              <span className="text-slate-500">Pedido #{order.order_number}</span>
+              <span className="font-bold text-slate-800">{formatCurrency(order.total)}</span>
+            </div>
+            {canManage && (
+              <p className="text-xs text-slate-400 italic mb-1">Toque em um item para cancelá-lo</p>
+            )}
+            <div className="space-y-1 max-h-48 overflow-y-auto">
+              {activeItems.map(item => (
+                <button
+                  key={item.id}
+                  onClick={() => canManage && cancelItem(item.id, item.product_name)}
+                  className={cn(
+                    'w-full flex justify-between text-xs rounded-lg px-2 py-1.5 transition-colors text-left',
+                    canManage
+                      ? 'hover:bg-rose-50 hover:text-rose-600 text-slate-600 group'
+                      : 'text-slate-600 cursor-default'
+                  )}
+                >
+                  <span className="flex items-center gap-1">
+                    {canManage && <Trash2 size={10} className="opacity-0 group-hover:opacity-100 text-rose-400 flex-shrink-0 transition-opacity" />}
+                    {item.quantity}x {item.product_name}
+                  </span>
+                  <span>{formatCurrency(item.total_price)}</span>
+                </button>
+              ))}
+            </div>
           </div>
-          <div className="space-y-1">
-            {(order.items ?? []).map(item => (
-              <div key={item.id} className="flex justify-between text-xs text-slate-600">
-                <span>{item.quantity}x {item.product_name}</span>
-                <span>{formatCurrency(item.total_price)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
+
+          {canManage && (
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                leftIcon={<Receipt size={14} />}
+                onClick={() => onCharge(order)}
+                className="bg-emerald-600 hover:bg-emerald-500"
+              >
+                Cobrar Mesa
+              </Button>
+              <Button
+                variant="outline"
+                leftIcon={<XCircle size={14} />}
+                onClick={() => onCancelOrder(order)}
+                className="border-rose-200 text-rose-500 hover:bg-rose-50"
+              >
+                Cancelar Pedido
+              </Button>
+            </div>
+          )}
+        </>
       ) : (
         <p className="text-sm text-slate-400 text-center py-2">Mesa sem pedido ativo</p>
       )}
@@ -362,6 +428,123 @@ function AddTableModal({ open, onClose, tenantId, onSaved }: {
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" onClick={onClose}>Cancelar</Button>
           <Button loading={saving} onClick={save}>Salvar</Button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+// ──────────────────────────────────────────
+function ChargeTableModal({ open, onClose, order, tenantId, userId, onPaid }: {
+  open: boolean; onClose: () => void; order: Order | null
+  tenantId: string; userId: string; onPaid: () => void
+}) {
+  const [method, setMethod] = useState<PaymentMethod>('pix')
+  const [paidAmount, setPaidAmount] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (order) setPaidAmount(String(order.total))
+  }, [order])
+
+  const change = Math.max(0, (parseFloat(paidAmount) || 0) - (order?.total ?? 0))
+
+  async function pay() {
+    if (!order) return
+    setSaving(true)
+    try {
+      await supabase.from('orders').update({
+        status: 'paid',
+        payment_method: method,
+        paid_amount: parseFloat(paidAmount) || order.total,
+        change_amount: change,
+        paid_at: new Date().toISOString(),
+      }).eq('id', order.id)
+
+      if (order.table_id) {
+        await supabase.from('restaurant_tables').update({ status: 'cleaning' }).eq('id', order.table_id)
+      }
+
+      // Registra no caixa aberto se houver
+      const { data: reg } = await supabase.from('cash_registers')
+        .select('id').eq('tenant_id', tenantId).eq('status', 'open').single()
+      if (reg) {
+        await supabase.from('cash_transactions').insert({
+          register_id: reg.id, tenant_id: tenantId, user_id: userId,
+          transaction_type: 'sale', amount: order.total,
+          order_id: order.id, payment_method: method,
+          description: `Pagamento pedido #${order.order_number}`,
+        })
+      }
+
+      onPaid()
+      onClose()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!order) return null
+
+  const methods: { value: PaymentMethod; label: string; icon: React.ElementType }[] = [
+    { value: 'pix',         label: 'PIX',     icon: Smartphone },
+    { value: 'credit_card', label: 'Crédito', icon: CreditCard },
+    { value: 'debit_card',  label: 'Débito',  icon: CreditCard },
+    { value: 'cash',        label: 'Dinheiro', icon: Banknote  },
+  ]
+
+  return (
+    <Modal open={open} onClose={onClose} title={`Cobrar Mesa — Pedido #${order.order_number}`}>
+      <div className="space-y-4">
+        {/* Itens */}
+        <div className="bg-slate-50 rounded-xl p-4 space-y-1.5 max-h-48 overflow-y-auto">
+          {(order.items ?? []).map(item => (
+            <div key={item.id} className="flex justify-between text-sm">
+              <span className="text-slate-600">{item.quantity}x {item.product_name}</span>
+              <span className="font-medium">{formatCurrency(item.total_price)}</span>
+            </div>
+          ))}
+          <div className="flex justify-between font-bold text-base pt-2 border-t mt-2">
+            <span>Total</span>
+            <span className="text-emerald-600">{formatCurrency(order.total)}</span>
+          </div>
+        </div>
+
+        {/* Forma de pagamento */}
+        <div>
+          <p className="text-sm font-medium text-slate-600 mb-2">Forma de pagamento</p>
+          <div className="grid grid-cols-4 gap-2">
+            {methods.map(m => (
+              <button key={m.value} onClick={() => setMethod(m.value)}
+                className={cn('flex flex-col items-center gap-1 p-3 rounded-xl border-2 text-xs font-semibold transition-all',
+                  method === m.value ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-600')}>
+                <m.icon size={18} />
+                {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Valor recebido (apenas dinheiro) */}
+        {method === 'cash' && (
+          <div className="space-y-2">
+            <Input label="Valor recebido (R$)" type="number" step="0.01"
+              value={paidAmount} onChange={e => setPaidAmount(e.target.value)} />
+            {change > 0 && (
+              <div className="flex justify-between text-sm font-semibold px-3 py-2 rounded-lg bg-emerald-50 text-emerald-700">
+                <span>Troco</span>
+                <span>{formatCurrency(change)}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex gap-2 pt-2">
+          <Button variant="secondary" className="flex-1" onClick={onClose}>Cancelar</Button>
+          <Button className="flex-1 bg-emerald-600 hover:bg-emerald-500" loading={saving} onClick={pay}
+            leftIcon={<Receipt size={15} />}>
+            Confirmar Pagamento
+          </Button>
         </div>
       </div>
     </Modal>

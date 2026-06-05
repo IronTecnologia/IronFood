@@ -26,58 +26,61 @@ export default function Reports() {
   async function loadReports() {
     if (!tenant) return
     setLoading(true)
-    const now = new Date()
-    const days = period === 'today' ? 0 : period === '7d' ? 6 : 29
-    const start = period === 'today' ? startOfDay(now) : startOfDay(subDays(now, days))
+    try {
+      const now = new Date()
+      const days = period === 'today' ? 0 : period === '7d' ? 6 : 29
+      const start = period === 'today' ? startOfDay(now) : startOfDay(subDays(now, days))
 
-    const { data: orders } = await supabase
-      .from('orders')
-      .select('id, total, payment_method, created_at, items:order_items(product_name, total_price, quantity)')
-      .eq('tenant_id', tenant.id)
-      .eq('status', 'paid')
-      .gte('created_at', start.toISOString())
-      .lte('created_at', endOfDay(now).toISOString())
+      const { data: orders } = await supabase
+        .from('orders')
+        .select('id, total, payment_method, created_at, items:order_items(product_name, total_price, quantity)')
+        .eq('tenant_id', tenant.id)
+        .eq('status', 'paid')
+        .gte('created_at', start.toISOString())
+        .lte('created_at', endOfDay(now).toISOString())
 
-    const allOrders = orders ?? []
-    const revenue = allOrders.reduce((s, o) => s + Number(o.total), 0)
-    const orderCount = allOrders.length
+      const allOrders = orders ?? []
+      const revenue = allOrders.reduce((s, o) => s + Number(o.total), 0)
+      const orderCount = allOrders.length
 
-    // Daily chart
-    const dailyMap: Record<string, number> = {}
-    for (let i = days; i >= 0; i--) {
-      dailyMap[format(subDays(now, i), 'dd/MM')] = 0
-    }
-    for (const o of allOrders) {
-      const day = format(new Date(o.created_at), 'dd/MM')
-      if (dailyMap[day] !== undefined) dailyMap[day] += Number(o.total)
-    }
-    setDaily(Object.entries(dailyMap).map(([day, value]) => ({ day, value: Number(value.toFixed(2)) })))
-
-    // By payment method
-    const payMap: Record<string, number> = {}
-    for (const o of allOrders) {
-      const pm = o.payment_method ?? 'other'
-      payMap[pm] = (payMap[pm] ?? 0) + Number(o.total)
-    }
-    setByPayment(Object.entries(payMap).map(([k, v]) => ({ name: PAYMENT_LABEL[k] ?? k, value: Number(v.toFixed(2)) })))
-
-    // By product/category
-    const prodMap: Record<string, number> = {}
-    let topProd = ''
-    let topVal = 0
-    for (const o of allOrders) {
-      for (const item of (o.items ?? []) as { product_name: string; total_price: number; quantity: number }[]) {
-        prodMap[item.product_name] = (prodMap[item.product_name] ?? 0) + Number(item.total_price)
-        if (prodMap[item.product_name] > topVal) { topVal = prodMap[item.product_name]; topProd = item.product_name }
+      // Daily chart
+      const dailyMap: Record<string, number> = {}
+      for (let i = days; i >= 0; i--) {
+        dailyMap[format(subDays(now, i), 'dd/MM')] = 0
       }
+      for (const o of allOrders) {
+        const day = format(new Date(o.created_at), 'dd/MM')
+        if (dailyMap[day] !== undefined) dailyMap[day] += Number(o.total)
+      }
+      setDaily(Object.entries(dailyMap).map(([day, value]) => ({ day, value: Number(value.toFixed(2)) })))
+
+      // By payment method
+      const payMap: Record<string, number> = {}
+      for (const o of allOrders) {
+        const pm = o.payment_method ?? 'other'
+        payMap[pm] = (payMap[pm] ?? 0) + Number(o.total)
+      }
+      setByPayment(Object.entries(payMap).map(([k, v]) => ({ name: PAYMENT_LABEL[k] ?? k, value: Number(v.toFixed(2)) })))
+
+      // By product/category
+      const prodMap: Record<string, number> = {}
+      let topProd = ''
+      let topVal = 0
+      for (const o of allOrders) {
+        for (const item of (o.items ?? []) as { product_name: string; total_price: number; quantity: number }[]) {
+          prodMap[item.product_name] = (prodMap[item.product_name] ?? 0) + Number(item.total_price)
+          if (prodMap[item.product_name] > topVal) { topVal = prodMap[item.product_name]; topProd = item.product_name }
+        }
+      }
+      const sortedProds = Object.entries(prodMap)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 6)
+        .map(([name, value]) => ({ name, value: Number(value.toFixed(2)) }))
+      setByCategory(sortedProds)
+      setMetrics({ revenue, orders: orderCount, avgTicket: orderCount > 0 ? revenue / orderCount : 0, topProduct: topProd })
+    } finally {
+      setLoading(false)
     }
-    const sortedProds = Object.entries(prodMap)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 6)
-      .map(([name, value]) => ({ name, value: Number(value.toFixed(2)) }))
-    setByCategory(sortedProds)
-    setMetrics({ revenue, orders: orderCount, avgTicket: orderCount > 0 ? revenue / orderCount : 0, topProduct: topProd })
-    setLoading(false)
   }
 
   if (loading) return <div className="flex justify-center pt-20"><Spinner size={32} /></div>

@@ -15,6 +15,12 @@ import Reports from './pages/Reports'
 import Users from './pages/Users'
 import Settings from './pages/Settings'
 import Menu from './pages/Menu'
+import DeliveryOrders from './pages/DeliveryOrders'
+import Landing from './pages/Landing'
+import Admin from './pages/Admin'
+import Customers from './pages/Customers'
+import SuperAdmin from './pages/SuperAdmin'
+import Financial from './pages/Financial'
 
 function RoleRedirect() {
   const role = useAuthStore(s => s.profile?.role)
@@ -26,6 +32,19 @@ function RoleRedirect() {
     cashier: '/pos',
   }
   return <Navigate to={role ? (map[role] ?? '/dashboard') : '/login'} replace />
+}
+
+function AdminRoute() {
+  const user = useAuthStore(s => s.user)
+  const profile = useAuthStore(s => s.profile)
+
+  // Se é superadmin (tenant_id === user.id)
+  if (user && profile && profile.tenant_id === user.id) {
+    return <SuperAdmin />
+  }
+
+  // Caso contrário, mostra o painel de admin normal
+  return <Admin />
 }
 
 export default function App() {
@@ -48,21 +67,26 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
+        <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />
         <Route path="/menu/:slug" element={<Menu />} />
 
         <Route element={<ProtectedRoute />}>
+          <Route path="/admin" element={<AdminRoute />} />
           <Route element={<AppLayout />}>
             <Route path="/" element={<RoleRedirect />} />
             <Route path="/dashboard"   element={<ProtectedRoute roles={['admin']}><Dashboard /></ProtectedRoute>} />
             <Route path="/tables"      element={<ProtectedRoute roles={['admin','waiter']}><Tables /></ProtectedRoute>} />
             <Route path="/products"    element={<ProtectedRoute roles={['admin']}><Products /></ProtectedRoute>} />
             <Route path="/orders"      element={<ProtectedRoute roles={['admin','waiter','cashier']}><Orders /></ProtectedRoute>} />
+            <Route path="/delivery"    element={<ProtectedRoute roles={['admin','cashier']}><DeliveryOrders /></ProtectedRoute>} />
             <Route path="/kds/kitchen" element={<ProtectedRoute roles={['admin','kitchen','waiter']}><KitchenKDS /></ProtectedRoute>} />
             <Route path="/kds/bar"     element={<ProtectedRoute roles={['admin','bar','waiter']}><BarKDS /></ProtectedRoute>} />
             <Route path="/pos"         element={<ProtectedRoute roles={['admin','cashier']}><POS /></ProtectedRoute>} />
             <Route path="/reports"     element={<ProtectedRoute roles={['admin']}><Reports /></ProtectedRoute>} />
+            <Route path="/financial"   element={<ProtectedRoute roles={['admin']}><Financial /></ProtectedRoute>} />
             <Route path="/users"       element={<ProtectedRoute roles={['admin']}><Users /></ProtectedRoute>} />
+            <Route path="/customers"   element={<ProtectedRoute roles={['admin']}><Customers /></ProtectedRoute>} />
             <Route path="/settings"    element={<ProtectedRoute roles={['admin']}><Settings /></ProtectedRoute>} />
           </Route>
         </Route>

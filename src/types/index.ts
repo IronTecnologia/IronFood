@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'waiter' | 'kitchen' | 'bar' | 'cashier'
+export type UserRole = 'admin' | 'waiter' | 'kitchen' | 'bar' | 'cashier' | 'motoboy'
 export type TenantType = 'restaurant' | 'burger' | 'pizzeria' | 'bar'
 export type OrderType = 'dine_in' | 'delivery' | 'takeout'
 export type OrderStatus = 'pending' | 'confirmed' | 'preparing' | 'ready' | 'delivered' | 'paid' | 'cancelled'
@@ -75,9 +75,20 @@ export interface RestaurantTable {
   current_order?: Order
 }
 
+export interface Customer {
+  id: string
+  tenant_id: string
+  name: string
+  phone: string
+  address?: string
+  created_at: string
+  updated_at: string
+}
+
 export interface Order {
   id: string
   tenant_id: string
+  customer_id?: string
   table_id?: string
   user_id?: string
   order_number: string
@@ -95,11 +106,34 @@ export interface Order {
   paid_amount?: number
   change_amount?: number
   paid_at?: string
+  motoboy_id?: string
+  delivery_area_id?: string
   created_at: string
   updated_at: string
   table?: RestaurantTable
   user?: Profile
   items?: OrderItem[]
+  motoboy?: Motoboy
+  delivery_area?: DeliveryArea
+  customer?: Customer
+}
+
+export interface AddonSelection {
+  id: string
+  name: string
+  price: number
+}
+
+export interface Addon {
+  id: string
+  tenant_id: string
+  category_id?: string
+  name: string
+  description?: string
+  price: number
+  available: boolean
+  sort_order: number
+  created_at: string
 }
 
 export interface OrderItem {
@@ -114,6 +148,7 @@ export interface OrderItem {
   status: ItemStatus
   sent_to_station: boolean
   station: ItemStation
+  addons?: AddonSelection[]
   created_at: string
   product?: Product
 }
@@ -135,6 +170,33 @@ export interface CashRegister {
   closed_at?: string
   notes?: string
   opener?: Profile
+}
+
+export interface DeliveryArea {
+  id: string
+  tenant_id: string
+  name: string
+  fee: number
+  active: boolean
+  sort_order: number
+  created_at: string
+}
+
+export interface Motoboy {
+  id: string
+  tenant_id: string
+  name: string
+  whatsapp?: string
+  active: boolean
+  created_at: string
+}
+
+export interface PrinterConfig {
+  id: string
+  tenant_id: string
+  method: 'kds' | 'printer'
+  printer_name?: string
+  created_at: string
 }
 
 export interface CashTransaction {

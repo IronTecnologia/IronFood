@@ -21,22 +21,25 @@ export default function POS() {
 
   const load = useCallback(async () => {
     if (!tenant) return
-    const [{ data: reg }, { data: orders }] = await Promise.all([
-      supabase.from('cash_registers').select('*, opener:profiles!cash_registers_opened_by_fkey(full_name)')
-        .eq('tenant_id', tenant.id).eq('status', 'open').single(),
-      supabase.from('orders').select('*, items:order_items(*), table:restaurant_tables(number)')
-        .eq('tenant_id', tenant.id).in('status', ['delivered', 'ready'])
-        .order('created_at', { ascending: true }),
-    ])
-    setRegister(reg as CashRegister | null)
-    setUnpaidOrders((orders ?? []) as Order[])
+    try {
+      const [{ data: reg }, { data: orders }] = await Promise.all([
+        supabase.from('cash_registers').select('*, opener:profiles!cash_registers_opened_by_fkey(full_name)')
+          .eq('tenant_id', tenant.id).eq('status', 'open').single(),
+        supabase.from('orders').select('*, items:order_items(*), table:restaurant_tables(number)')
+          .eq('tenant_id', tenant.id).in('status', ['delivered', 'ready'])
+          .order('created_at', { ascending: true }),
+      ])
+      setRegister(reg as CashRegister | null)
+      setUnpaidOrders((orders ?? []) as Order[])
 
-    if (reg) {
-      const { data: txns } = await supabase.from('cash_transactions')
-        .select('*').eq('register_id', reg.id).order('created_at', { ascending: false })
-      setTransactions((txns ?? []) as CashTransaction[])
+      if (reg) {
+        const { data: txns } = await supabase.from('cash_transactions')
+          .select('*').eq('register_id', reg.id).order('created_at', { ascending: false })
+        setTransactions((txns ?? []) as CashTransaction[])
+      }
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }, [tenant])
 
   useEffect(() => {
@@ -401,7 +404,7 @@ function PayOrderModal({ open, onClose, order, register, tenantId, userId, onPai
       <div className="space-y-4">
         {/* Items summary */}
         <div className="bg-slate-50 rounded-xl p-4 space-y-1.5 max-h-32 overflow-y-auto">
-          {(order.items ?? []).map(item => (
+          {(order.items ?? []).filter(item => item.status !== 'cancelled').map(item => (
             <div key={item.id} className="flex justify-between text-sm">
               <span className="text-slate-600">{item.quantity}x {item.product_name}</span>
               <span className="font-medium">{formatCurrency(item.total_price)}</span>
@@ -409,7 +412,7 @@ function PayOrderModal({ open, onClose, order, register, tenantId, userId, onPai
           ))}
           <div className="flex justify-between font-bold border-t pt-1.5">
             <span>Total</span>
-            <span className="text-indigo-600">{formatCurrency(order.total)}</span>
+            <span className="text-indigo-600">{formatCurrency((order.items ?? []).filter(item => item.status !== 'cancelled').reduce((sum, item) => sum + item.total_price, 0))}</span>
           </div>
         </div>
 

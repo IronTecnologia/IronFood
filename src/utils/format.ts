@@ -69,6 +69,7 @@ export const ROLE_LABEL: Record<string, string> = {
   kitchen: 'Cozinha',
   bar: 'Bar',
   cashier: 'Caixa',
+  motoboy: 'Motoboy',
 }
 
 export const TABLE_STATUS_LABEL: Record<string, string> = {

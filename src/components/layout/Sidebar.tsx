@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, UtensilsCrossed, Package, ClipboardList,
   ChefHat, GlassWater, DollarSign, BarChart3, Users,
-  Settings, QrCode, LogOut, Utensils,
+  Settings, QrCode, LogOut, Utensils, Truck, Contact, TrendingUp,
 } from 'lucide-react'
 import { useAuthStore } from '../../stores/authStore'
 import { cn } from '../../utils/cn'
@@ -11,11 +11,14 @@ import { ROLE_LABEL } from '../../utils/format'
 const NAV = [
   { to: '/dashboard',   icon: LayoutDashboard, label: 'Dashboard',    roles: ['admin'] },
   { to: '/tables',      icon: UtensilsCrossed, label: 'Mesas',        roles: ['admin','waiter'] },
-  { to: '/orders',      icon: ClipboardList,   label: 'Pedidos',      roles: ['admin','waiter','cashier'] },
+  { to: '/orders',      icon: ClipboardList,   label: 'Pedidos Salão',   roles: ['admin','waiter','cashier'] },
+  { to: '/delivery',    icon: Truck,           label: 'Pedidos Delivery', roles: ['admin','cashier'] },
   { to: '/kds/kitchen', icon: ChefHat,         label: 'KDS Cozinha',  roles: ['admin','kitchen','waiter'] },
   { to: '/kds/bar',     icon: GlassWater,      label: 'KDS Bar',      roles: ['admin','bar','waiter'] },
   { to: '/pos',         icon: DollarSign,      label: 'Caixa',        roles: ['admin','cashier'] },
   { to: '/products',    icon: Package,         label: 'Produtos',     roles: ['admin'] },
+  { to: '/customers',   icon: Contact,         label: 'Clientes',     roles: ['admin'] },
+  { to: '/financial',   icon: TrendingUp,      label: 'Financeiro',   roles: ['admin'] },
   { to: '/reports',     icon: BarChart3,       label: 'Relatórios',   roles: ['admin'] },
   { to: '/users',       icon: Users,           label: 'Usuários',     roles: ['admin'] },
   { to: '/settings',    icon: Settings,        label: 'Configurações',roles: ['admin'] },

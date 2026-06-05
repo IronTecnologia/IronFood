@@ -15,6 +15,7 @@ interface AuthActions {
   login: (email: string, password: string) => Promise<void>
   logout: () => Promise<void>
   refreshProfile: () => Promise<void>
+  resetPassword: (email: string) => Promise<void>
 }
 
 export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
@@ -47,6 +48,13 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
 
   login: async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password })
+    if (error) throw error
+  },
+
+  resetPassword: async (email: string) => {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    })
     if (error) throw error
   },
 
@@ -102,6 +110,7 @@ export function useCanAccess(page: string): boolean {
     tables: ['admin', 'waiter'],
     products: ['admin'],
     orders: ['admin', 'waiter', 'cashier'],
+    delivery: ['admin', 'cashier'],
     'kds/kitchen': ['admin', 'kitchen', 'waiter'],
     'kds/bar': ['admin', 'bar', 'waiter'],
     pos: ['admin', 'cashier'],
